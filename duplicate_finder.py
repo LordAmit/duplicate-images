@@ -6,6 +6,7 @@ Usage:
     duplicate_finder.py add <path> ... [--db=<db_path>] [--parallel=<num_processes>]
     duplicate_finder.py remove <path> ... [--db=<db_path>]
     duplicate_finder.py clear [--db=<db_path>]
+    duplicate_finder.py cleanup [--db=<db_path>]
     duplicate_finder.py show [--db=<db_path>]
     duplicate_finder.py find [--print] [--delete] [--match-time] [--trash=<trash_path>] [--db=<db_path>]
     duplicate_finder.py -h | --help
@@ -53,10 +54,11 @@ def connect_to_db(db_conn_string='./db'):
 
     # Determine db_conn_string is a mongo URI or a path
     # If this is a URI
-    if 'mongodb://' == db_conn_string[:10] or 'mongodb+srv://' == db_conn_string[:14]:
+    if 'mongodb://' == db_conn_string[
+                       :10] or 'mongodb+srv://' == db_conn_string[:14]:
         client = pymongo.MongoClient(db_conn_string)
         cprint("Connected server...", "yellow")
-        db = client.image_database
+        db: pymongo.collection = client.image_database
         images = db.images
 
     # If this is not a URI
@@ -64,7 +66,8 @@ def connect_to_db(db_conn_string='./db'):
         if not os.path.isdir(db_conn_string):
             os.makedirs(db_conn_string)
 
-        p = Popen(['mongod', '--dbpath', db_conn_string], stdout=PIPE, stderr=PIPE)
+        p = Popen(['mongod', '--dbpath', db_conn_string], stdout=PIPE,
+                  stderr=PIPE)
 
         try:
             p.wait(timeout=2)
@@ -97,9 +100,11 @@ def get_image_files(path):
     :param path:
     :return: yield absolute path
     """
+
     def is_image(file_name):
         # List mime types fully supported by Pillow
-        full_supported_formats = ['gif', 'jp2', 'jpeg', 'pcx', 'png', 'tiff', 'x-ms-bmp',
+        full_supported_formats = ['gif', 'jp2', 'jpeg', 'pcx', 'png', 'tiff',
+                                  'x-ms-bmp',
                                   'x-portable-pixmap', 'x-xbitmap']
         try:
             mime = magic.from_file(file_name, mime=True)
@@ -125,7 +130,7 @@ def hash_file(file):
         capture_time = get_capture_time(img)
 
         # hash the image 4 times and rotate it by 90 degrees each time
-        for angle in [ 0, 90, 180, 270 ]:
+        for angle in [0, 90, 180, 270]:
             if angle > 0:
                 turned_img = img.rotate(angle, expand=True)
             else:
@@ -142,7 +147,8 @@ def hash_file(file):
 
 
 def hash_files_parallel(files, num_processes=None):
-    with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
+    with concurrent.futures.ProcessPoolExecutor(
+            max_workers=num_processes) as executor:
         for result in executor.map(hash_file, files):
             if result is not None:
                 yield result
@@ -233,11 +239,11 @@ def find(db, match_time=False):
             }
         }
     },
-    {
-        "$match": {
-            "total": {"$gt": 1}
-        }
-    }])
+        {
+            "$match": {
+                "total": {"$gt": 1}
+            }
+        }])
 
     if match_time:
         dups = (d for d in dups if same_time(d))
@@ -326,8 +332,17 @@ def get_capture_time(img):
         return "Time unknown"
 
 
+def cleanup_db(db: pymongo.collection):
+    images = list(db.find())
+    for image in images:
+        image_path: str = image['_id']
+        if not os.path.exists(image_path):
+            print("removing: " + str(image['_id']))
+            remove_image(image_path, db)
+
 if __name__ == '__main__':
     from docopt import docopt
+
     args = docopt(__doc__)
 
     if args['--trash']:
@@ -364,3 +379,5 @@ if __name__ == '__main__':
                 print("Number of duplicates: {}".format(len(dups)))
             else:
                 display_duplicates(dups, db=db)
+        elif args['cleanup']:
+            cleanup_db(db)
